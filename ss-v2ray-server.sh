@@ -107,7 +107,8 @@ cat > /etc/shadowsocks-libev/config.json <<EOF
     "method": "chacha20-ietf-poly1305",
     "timeout": 81300,
     "plugin": "/usr/local/bin/v2ray-plugin",
-    "plugin_opts": "server;tls;host=${HOST};cert=${CERT_DIR}/cert.pem;key=${CERT_DIR}/key.pem"
+    "plugin_opts": "server;tls;host=${HOST};cert=${CERT_DIR}/cert.pem;key=${CERT_DIR}/key.pem",
+    "mode": "tcp_and_udp"
 }
 EOF
 
