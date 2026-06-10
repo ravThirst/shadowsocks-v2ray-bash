@@ -128,10 +128,10 @@ Wants=network.target
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/usr/sbin/ip route add local default dev lo table 100
-ExecStart=/usr/sbin/ip rule add fwmark 1 lookup 100 pref 32000
-ExecStart=/usr/sbin/ip route add local 0.0.0.0/0 dev lo table tproxy
-ExecStart=/usr/sbin/ip rule add fwmark 0x1 lookup tproxy pref 32000
+ExecStart=/bin/bash -c '/usr/sbin/ip route add local default dev lo table 100 2>/dev/null || true'
+ExecStart=/bin/bash -c '/usr/sbin/ip rule add fwmark 1 lookup 100 pref 32000 2>/dev/null || true'
+ExecStart=/bin/bash -c '/usr/sbin/ip route add local 0.0.0.0/0 dev lo table tproxy 2>/dev/null || true'
+ExecStart=/bin/bash -c '/usr/sbin/ip rule add fwmark 0x1 lookup tproxy pref 32000 2>/dev/null || true'
 
 [Install]
 WantedBy=multi-user.target
