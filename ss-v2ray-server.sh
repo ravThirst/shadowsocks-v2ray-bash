@@ -24,10 +24,14 @@ echo "  2) HTTP-01 / ALPN (Direct server validation, port 80 must be free initia
 read -rp "Enter choice [1/2]: " DNS_CHOICE
 
 CF_TOKEN=""
+CF_Email=""
 ACME_DNS_FLAG=""
 if [[ "$DNS_CHOICE" == "1" ]]; then
     read -rp "Enter Cloudflare API Token: " CF_TOKEN
     [[ -z "$CF_TOKEN" ]] && error "Cloudflare API Token is required for DNS-01"
+    read -rp "Enter Cludflare Email: " CF_Email
+    [[ -z "$CF_Email" ]] && error "Cloudflare Email is required for DNS-01"
+    export CF_Email="$CF_Email"
     export CF_Token="$CF_TOKEN"
     ACME_DNS_FLAG="--dns dns_cf"
     info "Using Cloudflare DNS-01 validation"
@@ -119,6 +123,8 @@ RENEW_SCRIPT="/usr/local/bin/renew-shadowsocks-cert.sh"
 cat > "$RENEW_SCRIPT" <<RENEWEOF
 #!/bin/bash
 set -euo pipefail
+export CF_Token="${CF_TOKEN}"
+export CF_Email="${CF_Email}"
 HOST="${HOST}"
 ACME_DNS_FLAG="${ACME_DNS_FLAG}"
 systemctl stop shadowsocks-libev
