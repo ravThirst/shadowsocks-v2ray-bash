@@ -121,6 +121,7 @@ cat > "$RENEW_SCRIPT" <<RENEWEOF
 set -euo pipefail
 HOST="${HOST}"
 ACME_DNS_FLAG="${ACME_DNS_FLAG}"
+systemctl stop shadowsocks-libev
 LOGFILE="/var/log/acme-shadowsocks-renew.log"
 exec >> "\$LOGFILE" 2>&1
 echo "=== \$(date) ==="
@@ -129,7 +130,9 @@ echo "=== \$(date) ==="
     --server https://acme-v02.api.letsencrypt.org/directory
 if [ \$? -eq 0 ]; then
     echo "✓ Certificate renewed"
-    systemctl restart shadowsocks-libev
+    sudo cp /root/.acme.sh/${HOST}_ecc/fullchain.cer /etc/shadowsocks-libev/certs/cert.pem
+    sudo cp /root/.acme.sh/${HOST}_ecc/${HOST}.key /etc/shadowsocks-libev/certs/key.pem
+    systemctl start shadowsocks-libev
     echo "✓ Service restarted"
 else
     echo "✗ Renewal failed" >&2
