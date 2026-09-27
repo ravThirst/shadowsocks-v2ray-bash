@@ -40,3 +40,50 @@ than call
 /usr/local/bin/update-proxy-ips.sh
 ```
 to save current config
+
+## Xray reverse tunnel (VLESS + WS + TLS)
+For when the entry server can NOT connect to the exit server, but the exit server can connect to the entry server.
+The exit server (**bridge**) dials out to the entry server (**portal**) and keeps the connection open; the portal sends traffic back through it.
+The portal needs a valid domain name associated with its IP for TLS. The bridge needs no open ports.
+
+```
+clients --wg--> [portal / entry] <==VLESS+WS+TLS (initiated by bridge)== [bridge / exit] ---> internet
+```
+
+### Portal (entry server)
+```
+wget -q https://raw.githubusercontent.com/ravThirst/shadowsocks-v2ray-bash/refs/heads/main/xray-reverse-portal.sh
+sed -i 's/\r$//' ./xray-reverse-portal.sh
+chmod +x xray-reverse-portal.sh
+./xray-reverse-portal.sh
+```
+at the end it prints domain, port, UUID and WS path for the bridge
+
+### Bridge (exit server)
+```
+wget -q https://raw.githubusercontent.com/ravThirst/shadowsocks-v2ray-bash/refs/heads/main/xray-reverse-bridge.sh
+sed -i 's/\r$//' ./xray-reverse-bridge.sh
+chmod +x xray-reverse-bridge.sh
+./xray-reverse-bridge.sh
+```
+
+portal side is whitelist based as well, networks from
+```
+nano /etc/reverse-ips.txt
+```
+are sent through the bridge, apply with
+```
+/usr/local/bin/update-reverse-ips.sh
+```
+can coexist with ss-v2ray-client on the same server (separate ipset, chain and port), keep the lists from overlapping
+
+### Migrating an existing client to portal
+if the entry server was set up with `ss-v2ray-client.sh`, run this instead of `xray-reverse-portal.sh`.
+It disables ss-redir and lets Xray take over its local port, keeping the existing ipset, `/etc/proxy-ips.txt`, `update-proxy-ips.sh` and iptables rules
+```
+wget -q https://raw.githubusercontent.com/ravThirst/shadowsocks-v2ray-bash/refs/heads/main/xray-reverse-migrate.sh
+sed -i 's/\r$//' ./xray-reverse-migrate.sh
+chmod +x xray-reverse-migrate.sh
+./xray-reverse-migrate.sh
+```
+rollback: `systemctl disable --now xray && systemctl enable --now ss-redir`
