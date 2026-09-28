@@ -101,3 +101,14 @@ chmod +x xray-reverse-3xui.sh
 prints panel URL and credentials at the end. If 3x-ui is already installed, the script runs in repair mode (updates the bridge inbound, converts an old WS `users` inbound to REALITY keeping its users, rewrites routing). In the panel don't edit inbounds marked `(do not edit)` or the `bridge` client (its reverse tag `bridge-out`), and keep the first routing rules in Xray settings.
 
 rollback: `systemctl disable --now x-ui && systemctl enable --now xray`
+
+## 3x-ui + VLESS REALITY for users
+[3x-ui](https://github.com/MHSanaei/3x-ui) panel with a VLESS + REALITY + Vision inbound: per-user access, traffic limits, expiry, share links / QR. No domain needed. Traffic exits the server directly.
+On a server with `ss-v2ray-client.sh`, TCP to networks in `/etc/proxy-ips.txt` still goes through ss-redir (iptables OUTPUT hook), everything else directly.
+```
+wget -q https://raw.githubusercontent.com/ravThirst/shadowsocks-v2ray-bash/refs/heads/main/xui-reality.sh
+sed -i 's/\r$//' ./xui-reality.sh
+chmod +x xui-reality.sh
+./xui-reality.sh
+```
+panel credentials are random, printed at the end and saved in `/etc/x-ui/install-result.env`
