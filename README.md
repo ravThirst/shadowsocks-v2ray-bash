@@ -87,3 +87,16 @@ chmod +x xray-reverse-migrate.sh
 ./xray-reverse-migrate.sh
 ```
 rollback: `systemctl disable --now xray && systemctl enable --now ss-redir`
+
+### 3x-ui panel with user management on portal
+moves an existing portal (set up by `xray-reverse-portal.sh` or `xray-reverse-migrate.sh`) under the [3x-ui](https://github.com/MHSanaei/3x-ui) web panel and adds a separate `users` VLESS+WS+TLS inbound (default port 8443) whose clients are managed in the panel (traffic limits, expiry, subscription links).
+Bridge, WireGuard redirect and cert stay the same, all traffic still exits through the bridge
+```
+wget -q https://raw.githubusercontent.com/ravThirst/shadowsocks-v2ray-bash/refs/heads/main/xray-reverse-3xui.sh
+sed -i 's/\r$//' ./xray-reverse-3xui.sh
+chmod +x xray-reverse-3xui.sh
+./xray-reverse-3xui.sh
+```
+prints panel URL and credentials at the end. In the panel don't edit inbounds marked `(do not edit)` or the `bridge` client, and keep the `reverse` section and first routing rules in Xray settings.
+
+rollback: `systemctl disable --now x-ui && systemctl enable --now xray`
