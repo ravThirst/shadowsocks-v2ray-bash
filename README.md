@@ -90,7 +90,7 @@ chmod +x xray-reverse-migrate.sh
 rollback: `systemctl disable --now xray && systemctl enable --now ss-redir`
 
 ### 3x-ui panel with user management on portal
-moves an existing portal (set up by `xray-reverse-portal.sh` or `xray-reverse-migrate.sh`) under the [3x-ui](https://github.com/MHSanaei/3x-ui) web panel and adds a separate `users` VLESS+WS+TLS inbound (default port 8443) whose clients are managed in the panel (traffic limits, expiry, subscription links).
+moves an existing portal (set up by `xray-reverse-portal.sh` or `xray-reverse-migrate.sh`) under the [3x-ui](https://github.com/MHSanaei/3x-ui) web panel and adds a separate `users` VLESS+REALITY+Vision inbound (default port 8443) whose clients are managed in the panel (traffic limits, expiry, subscription links).
 Bridge, WireGuard redirect and cert stay the same, all traffic still exits through the bridge
 ```
 wget -q https://raw.githubusercontent.com/ravThirst/shadowsocks-v2ray-bash/refs/heads/main/xray-reverse-3xui.sh
@@ -98,6 +98,6 @@ sed -i 's/\r$//' ./xray-reverse-3xui.sh
 chmod +x xray-reverse-3xui.sh
 ./xray-reverse-3xui.sh
 ```
-prints panel URL and credentials at the end. If 3x-ui is already installed, the script runs in repair mode (re-creates the bridge inbound, keeps users, rewrites routing). In the panel don't edit inbounds marked `(do not edit)` or the `bridge` client (its reverse tag `bridge-out`), and keep the first routing rules in Xray settings.
+prints panel URL and credentials at the end. If 3x-ui is already installed, the script runs in repair mode (updates the bridge inbound, converts an old WS `users` inbound to REALITY keeping its users, rewrites routing). In the panel don't edit inbounds marked `(do not edit)` or the `bridge` client (its reverse tag `bridge-out`), and keep the first routing rules in Xray settings.
 
 rollback: `systemctl disable --now x-ui && systemctl enable --now xray`

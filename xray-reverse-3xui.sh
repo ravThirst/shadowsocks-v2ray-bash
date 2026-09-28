@@ -9,12 +9,12 @@ set -euo pipefail
 #   tunnel-in   VLESS+WS+TLS for the bridge (same port, UUID, WS path)
 #   redir-tcp   REDIRECT target for WireGuard clients (unchanged port)
 #   redir-udp   TPROXY target for WireGuard clients (unchanged port)
-#   clients-in  NEW: VLESS+WS+TLS for users, managed in the panel
+#   clients-in  NEW: VLESS+REALITY+Vision for users, managed in the panel
 # All of them exit through the bridge.
 #
-# If 3x-ui is already installed, runs in repair mode: re-creates tunnel-in,
-# adds missing inbounds (existing ones and their users are kept) and rewrites
-# the routing rules.
+# If 3x-ui is already installed, runs in repair mode: updates tunnel-in,
+# adds missing inbounds, converts an old WS+TLS users inbound to REALITY
+# (users are kept) and rewrites the routing rules.
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
 info() { echo -e "${GREEN}[INFO]${NC} $1"; }
@@ -51,7 +51,6 @@ HOST=$(openssl x509 -in "$CERT_DIR/cert.pem" -noout -subject -nameopt RFC2253 | 
 info "Found portal: ${HOST}:${TUNNEL_PORT}, WS path ${TUNNEL_PATH}, redirect port ${LOCAL_PORT}"
 
 CLIENT_PORT=8443
-CLIENT_PATH="/$(openssl rand -hex 12)"
 PANEL_USER=""
 PANEL_PASS=""
 
@@ -77,13 +76,17 @@ else
     PANEL_PASS=${PANEL_PASS:-$(openssl rand -hex 12)}
     read -rp "Users VLESS port [${CLIENT_PORT}]: " INPUT
     CLIENT_PORT=${INPUT:-$CLIENT_PORT}
-    read -rp "Users WebSocket path [random]: " INPUT
-    CLIENT_PATH=${INPUT:-$CLIENT_PATH}
 fi
+
+# REALITY impersonates a real TLS 1.3 site: pick a popular HTTPS site reachable from this server,
+# ideally one hosted in the same country as this server
+read -rp "REALITY target site (SNI) [www.microsoft.com]: " REALITY_SNI
+REALITY_SNI=${REALITY_SNI:-www.microsoft.com}
+REALITY_SNI=${REALITY_SNI#https://}; REALITY_SNI=${REALITY_SNI%%/*}; REALITY_SNI=${REALITY_SNI%%:*}
+curl -sS -o /dev/null --tlsv1.3 --max-time 8 "https://${REALITY_SNI}"     || error "${REALITY_SNI} is not reachable over TLS 1.3 from this server, pick another site"
 
 [[ "$PANEL_PATH" != /* ]] && PANEL_PATH="/$PANEL_PATH"
 [[ "$PANEL_PATH" != */ ]] && PANEL_PATH="$PANEL_PATH/"
-[[ "$CLIENT_PATH" != /* ]] && CLIENT_PATH="/$CLIENT_PATH"
 for p in "$PANEL_PORT" "$CLIENT_PORT"; do
     [[ "$p" == "$TUNNEL_PORT" || "$p" == "$LOCAL_PORT" ]] && error "Port $p is already used by the portal"
 done
@@ -154,23 +157,42 @@ client_json() {  # uuid email [reverse tag]
         + (if $rv != "" then { reverse: { tag: $rv } } else {} end)'
 }
 
-ensure_inbound() {  # recreate(0/1) tag remark port protocol settings stream
-    local recreate=$1 tag=$2 id
-    id=$(inbound_field "$tag" id)
-    if [[ -n "$id" ]]; then
-        if [[ $recreate -eq 0 ]]; then
-            info "Inbound '$tag' exists, kept"
-            return
-        fi
-        api_json "/inbounds/del/$id" '{}'
-    fi
-    api_json /inbounds/add "$(jq -cn --arg tag "$tag" --arg remark "$3" --argjson port "$4" --arg proto "$5" \
-        --arg settings "$6" --arg stream "$7" '{
+inbound_body() {  # tag remark port protocol settings stream
+    jq -cn --arg tag "$1" --arg remark "$2" --argjson port "$3" --arg proto "$4" \
+        --arg settings "$5" --arg stream "$6" '{
         enable: true, remark: $remark, listen: "", port: $port, protocol: $proto, tag: $tag,
         total: 0, expiryTime: 0, settings: $settings, streamSettings: $stream,
         sniffing: "{\"enabled\":false}"
-    }')"
-    info "Inbound '$tag' added"
+    }'
+}
+
+# Existing inbounds are updated in place: deleting one in 3x-ui only detaches its
+# clients, so re-adding the same client email would fail.
+ensure_inbound() {  # overwrite(0/1) tag remark port protocol settings stream
+    local overwrite=$1 tag=$2 id
+    id=$(inbound_field "$tag" id)
+    if [[ -z "$id" ]]; then
+        api_json /inbounds/add "$(inbound_body "${@:2}")"
+        info "Inbound '$tag' added"
+    elif [[ $overwrite -eq 1 ]]; then
+        api_json "/inbounds/update/$id" "$(inbound_body "${@:2}")"
+        info "Inbound '$tag' updated"
+    else
+        info "Inbound '$tag' exists, kept"
+    fi
+}
+
+REALITY_STREAM() {  # sni private-key public-key short-id
+    jq -cn --arg sni "$1" --arg priv "$2" --arg pub "$3" --arg sid "$4" '{
+        network: "tcp", security: "reality", externalProxy: [],
+        realitySettings: {
+            show: false, xver: 0, target: ($sni + ":443"), serverNames: [$sni],
+            privateKey: $priv, minClientVer: "", maxClientVer: "", maxTimediff: 0,
+            shortIds: [$sid], mldsa65Seed: "",
+            settings: { publicKey: $pub, fingerprint: "chrome", serverName: "", spiderX: "/", mldsa65Verify: "" }
+        },
+        tcpSettings: { acceptProxyProtocol: false, header: { type: "none" } }
+    }'
 }
 
 ensure_inbound 1 tunnel-in "reverse-bridge (do not edit)" "$TUNNEL_PORT" vless \
@@ -185,10 +207,24 @@ ensure_inbound 0 redir-udp "redirect-udp (do not edit)" "$LOCAL_PORT" tunnel \
     '{"allowedNetwork":"udp","followRedirect":true}' \
     '{"network":"tcp","security":"none","sockopt":{"tproxy":"tproxy"}}'
 
-ensure_inbound 0 clients-in "users" "$CLIENT_PORT" vless \
-    "$(jq -cn --argjson c "$(client_json "$(cat /proc/sys/kernel/random/uuid)" user1)" '{ clients: [$c], decryption: "none", fallbacks: [] }')" \
-    "$(TLS_STREAM "$CLIENT_PATH")"
-CLIENT_PORT=$(inbound_field clients-in port)
+# Users inbound: VLESS + REALITY + Vision. An existing one is converted in place, keeping its users and port.
+KEYS=$(api_get /server/getNewX25519Cert)
+REALITY_PRIV=$(jq -r '.obj.privateKey // empty' <<<"$KEYS")
+REALITY_PUB=$(jq -r '.obj.publicKey // empty' <<<"$KEYS")
+[[ -z "$REALITY_PRIV" || -z "$REALITY_PUB" ]] && error "Could not generate REALITY keys: $KEYS"
+STREAM=$(REALITY_STREAM "$REALITY_SNI" "$REALITY_PRIV" "$REALITY_PUB" "$(openssl rand -hex 8)")
+
+CLIENTS_ID=$(inbound_field clients-in id)
+if [[ -n "$CLIENTS_ID" ]]; then
+    CLIENT_PORT=$(inbound_field clients-in port)
+    SETTINGS=$(inbound_field clients-in settings | jq -c '.clients |= map(.flow = "xtls-rprx-vision") | .decryption = "none"')
+    api_json "/inbounds/update/$CLIENTS_ID" "$(inbound_body clients-in "users" "$CLIENT_PORT" vless "$SETTINGS" "$STREAM")"
+    info "Inbound 'clients-in' switched to REALITY (users kept)"
+else
+    SETTINGS=$(jq -cn --argjson c "$(client_json "$(cat /proc/sys/kernel/random/uuid)" user1)"         '{ clients: [$c | .flow = "xtls-rprx-vision"], decryption: "none", fallbacks: [] }')
+    api_json /inbounds/add "$(inbound_body clients-in "users" "$CLIENT_PORT" vless "$SETTINGS" "$STREAM")"
+    info "Inbound 'clients-in' added (REALITY)"
+fi
 
 # --- Xray Template: routing to the bridge ---
 info "Configuring routing to the bridge in 3x-ui Xray template..."
@@ -250,7 +286,8 @@ if [[ $REPAIR -eq 0 ]]; then
     echo "  Username: ${PANEL_USER}"
     echo "  Password: ${PANEL_PASS}"
 fi
-echo -e "${CYAN}Users inbound:${NC} 'users' on ${CLIENT_PORT}/tcp (VLESS+WS+TLS)"
+echo -e "${CYAN}Users inbound:${NC} 'users' on ${CLIENT_PORT}/tcp (VLESS+REALITY+Vision, SNI ${REALITY_SNI})"
+echo -e "${YELLOW}Clients must re-import their links / QR codes from the panel.${NC}"
 echo -e "${YELLOW}Bridge must use VLESS Reverse Proxy: re-run xray-reverse-bridge.sh on the exit server.${NC}"
 echo -e "${YELLOW}Do not edit or delete inbounds marked '(do not edit)' or the 'bridge' client.${NC}"
 echo -e "${CYAN}Rollback:${NC} systemctl disable --now x-ui && systemctl enable --now xray"
