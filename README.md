@@ -42,6 +42,7 @@ than call
 to save current config
 
 ## Xray reverse tunnel (VLESS + WS + TLS)
+Uses Xray "VLESS Reverse Proxy" (the legacy `reverse` bridges/portals config was removed from Xray), so both sides need a recent Xray; the scripts install the latest.
 For when the entry server can NOT connect to the exit server, but the exit server can connect to the entry server.
 The exit server (**bridge**) dials out to the entry server (**portal**) and keeps the connection open; the portal sends traffic back through it.
 The portal needs a valid domain name associated with its IP for TLS. The bridge needs no open ports.
@@ -97,6 +98,6 @@ sed -i 's/\r$//' ./xray-reverse-3xui.sh
 chmod +x xray-reverse-3xui.sh
 ./xray-reverse-3xui.sh
 ```
-prints panel URL and credentials at the end. In the panel don't edit inbounds marked `(do not edit)` or the `bridge` client, and keep the `reverse` section and first routing rules in Xray settings.
+prints panel URL and credentials at the end. If 3x-ui is already installed, the script runs in repair mode (re-creates the bridge inbound, keeps users, rewrites routing). In the panel don't edit inbounds marked `(do not edit)` or the `bridge` client (its reverse tag `bridge-out`), and keep the first routing rules in Xray settings.
 
 rollback: `systemctl disable --now x-ui && systemctl enable --now xray`

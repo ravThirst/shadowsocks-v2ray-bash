@@ -38,21 +38,21 @@ info "Writing Xray configuration..."
 cat > /usr/local/etc/xray/config.json <<EOF
 {
   "log": { "loglevel": "warning" },
-  "reverse": {
-    "bridges": [ { "tag": "bridge", "domain": "reverse.internal" } ]
-  },
   "outbounds": [
+    {
+      "tag": "direct",
+      "protocol": "freedom",
+      "settings": { "domainStrategy": "UseIPv4" }
+    },
     {
       "tag": "tunnel",
       "protocol": "vless",
       "settings": {
-        "vnext": [
-          {
-            "address": "${PORTAL_IP}",
-            "port": ${PORTAL_PORT},
-            "users": [ { "id": "${UUID}", "encryption": "none" } ]
-          }
-        ]
+        "address": "${PORTAL_IP}",
+        "port": ${PORTAL_PORT},
+        "id": "${UUID}",
+        "encryption": "none",
+        "reverse": { "tag": "bridge-in" }
       },
       "streamSettings": {
         "network": "ws",
@@ -64,17 +64,11 @@ cat > /usr/local/etc/xray/config.json <<EOF
         },
         "wsSettings": { "path": "${WS_PATH}", "host": "${PORTAL_HOST}" }
       }
-    },
-    {
-      "tag": "direct",
-      "protocol": "freedom",
-      "settings": { "domainStrategy": "UseIPv4" }
     }
   ],
   "routing": {
     "rules": [
-      { "type": "field", "inboundTag": ["bridge"], "domain": ["full:reverse.internal"], "outboundTag": "tunnel" },
-      { "type": "field", "inboundTag": ["bridge"], "outboundTag": "direct" }
+      { "type": "field", "inboundTag": ["bridge-in"], "outboundTag": "direct" }
     ]
   }
 }

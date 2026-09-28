@@ -83,9 +83,6 @@ info "Writing Xray configuration..."
 cat > /usr/local/etc/xray/config.json <<EOF
 {
   "log": { "loglevel": "warning" },
-  "reverse": {
-    "portals": [ { "tag": "portal", "domain": "reverse.internal" } ]
-  },
   "inbounds": [
     {
       "tag": "tunnel-in",
@@ -93,7 +90,7 @@ cat > /usr/local/etc/xray/config.json <<EOF
       "port": ${LISTEN_PORT},
       "protocol": "vless",
       "settings": {
-        "clients": [ { "id": "${UUID}" } ],
+        "clients": [ { "id": "${UUID}", "email": "bridge", "reverse": { "tag": "bridge-out" } } ],
         "decryption": "none"
       },
       "streamSettings": {
@@ -130,8 +127,7 @@ cat > /usr/local/etc/xray/config.json <<EOF
   ],
   "routing": {
     "rules": [
-      { "type": "field", "inboundTag": ["tunnel-in"], "domain": ["full:reverse.internal"], "outboundTag": "portal" },
-      { "type": "field", "inboundTag": ["redir-tcp", "redir-udp"], "outboundTag": "portal" },
+      { "type": "field", "inboundTag": ["redir-tcp", "redir-udp"], "outboundTag": "bridge-out" },
       { "type": "field", "inboundTag": ["tunnel-in"], "outboundTag": "block" }
     ]
   }
