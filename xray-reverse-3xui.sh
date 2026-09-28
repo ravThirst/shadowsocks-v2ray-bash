@@ -151,8 +151,8 @@ TLS_STREAM() {  # ws path
     }'
 }
 
-client_json() {  # uuid email [reverse tag]
-    jq -cn --arg id "$1" --arg email "$2" --arg rv "${3:-}" --arg sub "$(openssl rand -hex 8)" '
+client_json() {  # uuid email [reverse tag] [subId]
+    jq -cn --arg id "$1" --arg email "$2" --arg rv "${3:-}" --arg sub "${4:-$(openssl rand -hex 8)}" '
         { id: $id, email: $email, enable: true, flow: "", limitIp: 0, totalGB: 0, expiryTime: 0, tgId: 0, subId: $sub, reset: 0 }
         + (if $rv != "" then { reverse: { tag: $rv } } else {} end)'
 }
@@ -195,9 +195,27 @@ REALITY_STREAM() {  # sni private-key public-key short-id
     }'
 }
 
-ensure_inbound 1 tunnel-in "reverse-bridge (do not edit)" "$TUNNEL_PORT" vless \
-    "$(jq -cn --argjson c "$(client_json "$BRIDGE_UUID" bridge "$REVERSE_TAG")" '{ clients: [$c], decryption: "none", fallbacks: [] }')" \
-    "$(TLS_STREAM "$TUNNEL_PATH")"
+# 3x-ui keeps a client record per email (also after its inbound is deleted) and only accepts
+# the same email again with the same subId, so reuse the existing bridge client's subId.
+BRIDGE_REC=$(api_get /clients/get/bridge)
+BRIDGE_SUB=$(jq -r '.obj.client.subId // empty' <<<"$BRIDGE_REC" 2>/dev/null || true)
+TUNNEL_SETTINGS=$(jq -cn --argjson c "$(client_json "$BRIDGE_UUID" bridge "$REVERSE_TAG" "$BRIDGE_SUB")" \
+    '{ clients: [$c], decryption: "none", fallbacks: [] }')
+TUNNEL_BODY=$(inbound_body tunnel-in "reverse-bridge (do not edit)" "$TUNNEL_PORT" vless "$TUNNEL_SETTINGS" "$(TLS_STREAM "$TUNNEL_PATH")")
+
+# Find the bridge inbound by tag, else by the inbound the bridge client is attached to, else by port
+TUNNEL_ID=$(inbound_field tunnel-in id)
+[[ -z "$TUNNEL_ID" ]] && TUNNEL_ID=$(jq -r '.obj.inboundIds[0] // empty' <<<"$BRIDGE_REC" 2>/dev/null || true)
+[[ -z "$TUNNEL_ID" ]] && TUNNEL_ID=$(api_get /inbounds/list | \
+    jq -r --argjson p "$TUNNEL_PORT" '[.obj[]? | select(.port == $p and .protocol == "vless")][0].id // empty')
+
+if [[ -n "$TUNNEL_ID" ]]; then
+    api_json "/inbounds/update/$TUNNEL_ID" "$TUNNEL_BODY"
+    info "Inbound 'tunnel-in' updated"
+else
+    api_json /inbounds/add "$TUNNEL_BODY"
+    info "Inbound 'tunnel-in' added"
+fi
 
 ensure_inbound 0 redir-tcp "redirect-tcp (do not edit)" "$LOCAL_PORT" tunnel \
     '{"allowedNetwork":"tcp","followRedirect":true}' \
