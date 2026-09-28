@@ -25,6 +25,22 @@ apt update -qq
 apt install -y jq curl openssl
 
 # --- Interactive Inputs ---
+# REALITY itself needs no domain: the hostname is only the address put into client links
+# and the name the panel certificate is issued for
+read -rp "Server hostname (domain pointing to this server, empty = use IP): " HOST
+HOST=${HOST// /}; HOST=${HOST#https://}; HOST=${HOST%%/*}; HOST=${HOST%%:*}
+if [[ -n "$HOST" ]]; then
+    [[ "$HOST" =~ ^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)+$ ]] \
+        || error "Invalid hostname: $HOST"
+    HOST_IP=$(getent ahostsv4 "$HOST" | awk 'NR==1 {print $1}' || true)
+    [[ -z "$HOST_IP" ]] && error "$HOST does not resolve, create an A record pointing to this server first"
+    if ! ip -4 -o addr show | grep -qw "inet $HOST_IP"; then
+        PUBLIC_IP=$(curl -4 -s --max-time 5 https://api.ipify.org || true)
+        [[ "$HOST_IP" != "$PUBLIC_IP" ]] && \
+            warn "$HOST resolves to $HOST_IP, but this server's IP looks like ${PUBLIC_IP:-unknown} - check the A record"
+    fi
+fi
+
 read -rp "REALITY port [443]: " PORT
 PORT=${PORT:-443}
 ss -Hltn "sport = :${PORT}" | grep -q . && error "Port ${PORT} is already in use: $(ss -Hltnp "sport = :${PORT}" | head -1)"
@@ -43,8 +59,17 @@ read -rp "Allow users to reach private networks (10.x, 192.168.x, ... e.g. via s
 if [[ -x "$XUI" ]]; then
     warn "3x-ui is already installed, reusing the panel"
 else
-    info "Installing 3x-ui (random credentials, Let's Encrypt IP certificate if port 80 is free)..."
-    XUI_NONINTERACTIVE=1 XUI_SSL_MODE=ip \
+    # Panel certificate: Let's Encrypt for the hostname (or the IP), validated over HTTP port 80,
+    # which must be reachable from the internet. An existing acme.sh certificate for the hostname
+    # is reused. If issuing fails the installer continues and the panel stays on plain HTTP.
+    ss -Hltn "sport = :80" | grep -q . && warn "Port 80 is busy, the panel certificate can't be issued (panel will use HTTP)"
+    if [[ -n "$HOST" ]]; then
+        SSL_ENV=(XUI_SSL_MODE=domain "XUI_DOMAIN=$HOST")
+    else
+        SSL_ENV=(XUI_SSL_MODE=ip)
+    fi
+    info "Installing 3x-ui (random credentials)..."
+    env XUI_NONINTERACTIVE=1 "${SSL_ENV[@]}" \
         bash <(curl -fsSL https://raw.githubusercontent.com/MHSanaei/3x-ui/main/install.sh) </dev/null
     [[ -x "$XUI" ]] || error "3x-ui install failed"
 fi
@@ -83,8 +108,20 @@ api_json() {  # path, json body
 }
 
 # --- REALITY Inbound ---
-if api_get /inbounds/list | jq -e --arg t "$TAG" '.obj[]? | select(.tag == $t)' >/dev/null; then
-    warn "Inbound '$TAG' already exists, not changed"
+EXISTING=$(api_get /inbounds/list | jq -c --arg t "$TAG" '[.obj[]? | select(.tag == $t)][0] // empty')
+if [[ -n "$EXISTING" ]]; then
+    if [[ -n "$HOST" ]]; then
+        # Only switch the address used in client links to the hostname, keep everything else
+        BODY=$(jq -c --arg host "$HOST" '
+            { enable, remark, listen, port, protocol, tag, total, expiryTime, trafficReset, trafficResetDay,
+              settings, streamSettings, sniffing, subSortIndex, excludeFromSub }
+            | with_entries(select(.value != null))
+            + { shareAddrStrategy: "custom", shareAddr: $host }' <<<"$EXISTING")
+        api_json "/inbounds/update/$(jq -r '.id' <<<"$EXISTING")" "$BODY"
+        info "Inbound '$TAG' already exists, client links now use ${HOST}"
+    else
+        warn "Inbound '$TAG' already exists, not changed"
+    fi
 else
     KEYS=$(api_get /server/getNewX25519Cert)
     PRIV=$(jq -r '.obj.privateKey // empty' <<<"$KEYS")
@@ -108,11 +145,12 @@ else
         decryption: "none", fallbacks: []
     }')
 
-    api_json /inbounds/add "$(jq -cn --arg tag "$TAG" --argjson port "$PORT" --arg settings "$SETTINGS" --arg stream "$STREAM" '{
+    api_json /inbounds/add "$(jq -cn --arg tag "$TAG" --argjson port "$PORT" --arg settings "$SETTINGS" --arg stream "$STREAM" \
+        --arg host "$HOST" '{
         enable: true, remark: "reality", listen: "", port: $port, protocol: "vless", tag: $tag,
         total: 0, expiryTime: 0, settings: $settings, streamSettings: $stream,
         sniffing: "{\"enabled\":true,\"destOverride\":[\"http\",\"tls\",\"quic\"],\"routeOnly\":true}"
-    }')"
+    } + (if $host != "" then { shareAddrStrategy: "custom", shareAddr: $host } else {} end)')"
     info "Inbound '$TAG' added on ${PORT}/tcp with client 'user1'"
 fi
 
@@ -149,3 +187,10 @@ if [[ -f "$INSTALL_RESULT" ]]; then
     echo "  (saved in ${INSTALL_RESULT})"
 fi
 echo -e "${CYAN}Users:${NC} Inbounds -> 'reality' -> add clients, share link / QR per client"
+
+if ! "$XUI" setting -show | grep -q "^Panel is secure with SSL"; then
+    warn "The panel has no certificate and runs on plain HTTP (REALITY for users is not affected)."
+    warn "Open it through an SSH tunnel instead of directly:"
+    echo "  ssh -L ${PANEL_PORT}:127.0.0.1:${PANEL_PORT} root@<server-ip>   then http://127.0.0.1:${PANEL_PORT}${PANEL_PATH}"
+    warn "To get a certificate later: make TCP port 80 reachable from the internet, run 'x-ui' -> SSL Certificate Management"
+fi
